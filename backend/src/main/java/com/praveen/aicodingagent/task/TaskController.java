@@ -1,5 +1,6 @@
 package com.praveen.aicodingagent.task;
 
+import com.praveen.aicodingagent.auth.UserPrincipal;
 import com.praveen.aicodingagent.task.dto.CreateTaskRequest;
 import com.praveen.aicodingagent.task.dto.TaskResponse;
 import jakarta.validation.Valid;
@@ -8,18 +9,18 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.UUID;
 
 /**
- * NOTE ON AUTH: the Auth & User Service milestone hasn't landed yet, so
- * `userId` is taken directly from a request header instead of a JWT
- * principal. Every method already threads userId through TaskService so
- * that swapping the header for `@AuthenticationPrincipal` later is a
- * controller-only change - the service layer doesn't need to know how the
- * caller was identified.
+ * userId now comes from the JWT-authenticated principal (Auth & User
+ * Service milestone), not a client-supplied header. TaskService's method
+ * signatures didn't change - they already took userId as a parameter, so
+ * this ended up being a controller-only change, exactly as planned in
+ * Milestone 1.
  */
 @RestController
 @RequestMapping("/api/tasks")
@@ -30,10 +31,10 @@ public class TaskController {
 
     @PostMapping
     public ResponseEntity<TaskResponse> createTask(
-            @RequestHeader("X-User-Id") UUID userId,
+            @AuthenticationPrincipal UserPrincipal principal,
             @Valid @RequestBody CreateTaskRequest request
     ) {
-        Task task = taskService.createTask(userId, request);
+        Task task = taskService.createTask(principal.getId(), request);
         return ResponseEntity
                 .created(URI.create("/api/tasks/" + task.getId()))
                 .body(TaskResponse.from(task));
@@ -41,26 +42,26 @@ public class TaskController {
 
     @GetMapping("/{id}")
     public TaskResponse getTask(
-            @RequestHeader("X-User-Id") UUID userId,
+            @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID id
     ) {
-        return TaskResponse.from(taskService.getTaskForUser(id, userId));
+        return TaskResponse.from(taskService.getTaskForUser(id, principal.getId()));
     }
 
     @GetMapping
     public Page<TaskResponse> listTasks(
-            @RequestHeader("X-User-Id") UUID userId,
+            @AuthenticationPrincipal UserPrincipal principal,
             Pageable pageable
     ) {
-        return taskService.listTasksForUser(userId, pageable).map(TaskResponse::from);
+        return taskService.listTasksForUser(principal.getId(), pageable).map(TaskResponse::from);
     }
 
     @PostMapping("/{id}/cancel")
     @ResponseStatus(HttpStatus.OK)
     public TaskResponse cancelTask(
-            @RequestHeader("X-User-Id") UUID userId,
+            @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID id
     ) {
-        return TaskResponse.from(taskService.cancel(id, userId));
+        return TaskResponse.from(taskService.cancel(id, principal.getId()));
     }
 }

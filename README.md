@@ -37,8 +37,17 @@ made, not written up after the fact.
 - [x] Custom sandbox image (Java/Maven, Node/npm, Python/pip, git)
 - [x] Unit tests against a fake `ContainerRuntime`
 
-**Milestone 3 (next): Agent Orchestrator or Auth & User Service**
-- [ ] JWT auth (Auth & User Service)
+**Milestone 3: Auth & User Service** ✅
+- [x] User entity + BCrypt password hashing
+- [x] JWT issuance/validation (stateless, no revocation yet - see ADR-0004)
+- [x] `/api/auth/register`, `/api/auth/login`
+- [x] Real Spring Security filter chain (JSON 401/403, not the default
+      whitelabel page)
+- [x] `TaskController`/`SandboxController` retrofitted to
+      `@AuthenticationPrincipal` instead of the `X-User-Id` stand-in header
+- [x] `tasks.user_id` promoted to a real foreign key
+
+**Milestone 4 (next): Streaming Service or Agent Orchestrator**
 - [ ] Real-time streaming (SSE) for task logs
 - [ ] Agent Orchestrator (LLM tool-calling loop)
 
@@ -52,16 +61,20 @@ cd backend
 
 Swagger UI: `http://localhost:8080/swagger-ui.html`
 
-Every request currently requires an `X-User-Id: <uuid>` header in place of a
-real JWT principal - see the note in `TaskController` for why, and
-`SecurityConfig` for the temporary permissive filter chain.
+Every endpoint except `/api/auth/**` and Swagger now requires a Bearer
+token, issued via `/api/auth/register` or `/api/auth/login`.
 
-### Example: create a task
+### Example: register, then create a task
 
 ```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"praveen@example.com","password":"password123","displayName":"Praveen"}' \
+  | jq -r .token)
+
 curl -X POST http://localhost:8080/api/tasks \
   -H "Content-Type: application/json" \
-  -H "X-User-Id: 11111111-1111-1111-1111-111111111111" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
         "title": "Add pagination to /orders",
         "description": "Cursor-based pagination on the orders list endpoint",
@@ -86,13 +99,16 @@ exist yet:
 ```bash
 TASK_ID=$(uuidgen)
 
-curl -X POST http://localhost:8080/internal/sandboxes/$TASK_ID/ensure
+curl -X POST http://localhost:8080/internal/sandboxes/$TASK_ID/ensure \
+  -H "Authorization: Bearer $TOKEN"
 
 curl -X POST http://localhost:8080/internal/sandboxes/$TASK_ID/exec \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"command": ["git", "--version"]}'
 
-curl -X DELETE http://localhost:8080/internal/sandboxes/$TASK_ID
+curl -X DELETE http://localhost:8080/internal/sandboxes/$TASK_ID \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Architecture decisions
@@ -100,6 +116,7 @@ curl -X DELETE http://localhost:8080/internal/sandboxes/$TASK_ID
 - [ADR-0001: PostgreSQL over MySQL](docs/architecture/ADR-0001-postgresql-vs-mysql.md)
 - [ADR-0002: Centralized task state machine](docs/architecture/ADR-0002-task-state-machine.md)
 - [ADR-0003: Sandbox Manager container runtime strategy](docs/architecture/ADR-0003-sandbox-container-strategy.md)
+- [ADR-0004: Auth & User Service](docs/architecture/ADR-0004-auth-user-service.md)
 
 ## Tech stack
 

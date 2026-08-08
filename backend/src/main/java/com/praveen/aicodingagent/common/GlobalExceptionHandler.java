@@ -1,9 +1,11 @@
 package com.praveen.aicodingagent.common;
 
+import com.praveen.aicodingagent.auth.EmailAlreadyInUseException;
 import com.praveen.aicodingagent.task.InvalidTaskStateTransitionException;
 import com.praveen.aicodingagent.task.TaskNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -23,6 +25,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleInvalidTransition(InvalidTaskStateTransitionException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of(409, "INVALID_STATE_TRANSITION", ex.getMessage()));
+    }
+
+    @ExceptionHandler(EmailAlreadyInUseException.class)
+    public ResponseEntity<ApiError> handleEmailInUse(EmailAlreadyInUseException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of(409, "EMAIL_IN_USE", ex.getMessage()));
+    }
+
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<ApiError> handleBadCredentials(BadCredentialsException ex) {
+        // Deliberately generic message - never reveal whether the email or the password was wrong.
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiError.of(401, "INVALID_CREDENTIALS", "Invalid email or password"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

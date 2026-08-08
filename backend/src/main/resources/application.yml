@@ -42,6 +42,12 @@ sandbox:
   idle-timeout-minutes: ${SANDBOX_IDLE_TIMEOUT_MINUTES:30}
   reaper-interval-ms: 60000
 
+jwt:
+  # Dev-only default (base64 of a random 256-bit key) - MUST be overridden
+  # via the JWT_SECRET env var anywhere this isn't running on localhost.
+  secret: ${JWT_SECRET:dGhpc2lzYWRldm9ubHlzZWNyZXRrZXlkb25vdHVzZWlucHJvZA==}
+  expiration-minutes: ${JWT_EXPIRATION_MINUTES:1440}
+
 logging:
   level:
     org.hibernate.SQL: debug

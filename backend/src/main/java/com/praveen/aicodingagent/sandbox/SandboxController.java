@@ -12,6 +12,12 @@ import java.util.UUID;
  * Orchestrator existing to drive it. Not meant to survive to production as
  * public API - the Orchestrator will call SandboxManager directly, in
  * process, once it lands. Kept under /internal as a signal of that.
+ *
+ * Requires authentication (any valid user, via the global JWT filter chain)
+ * but does not yet check that the caller owns the given taskId - that
+ * ownership check belongs in the Orchestrator layer, which will already
+ * have looked the task up via TaskService (and thus already knows the
+ * owner) before it ever touches the sandbox for it.
  */
 @RestController
 @RequestMapping("/internal/sandboxes")
