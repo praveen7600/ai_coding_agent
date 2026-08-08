@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: ai-coding-agent
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ai_coding_agent}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+
+  jpa:
+    hibernate:
+      # Schema is owned by Flyway migrations, not Hibernate. `validate`
+      # catches drift between entities and the schema at startup instead of
+      # silently auto-altering tables in a way that's hard to reason about
+      # in an interview - or in prod.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    org.hibernate.SQL: debug
