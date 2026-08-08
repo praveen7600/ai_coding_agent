@@ -21,14 +21,25 @@ made, not written up after the fact.
 
 ## Current status
 
-**Milestone 1 (in progress): Backend skeleton**
+**Milestone 1: Backend skeleton** ✅
 - [x] Task domain model (entity, JSONB context, Flyway migration)
 - [x] REST API: create / get / list / cancel a task
 - [x] Centralized task state machine with unit tests
 - [x] Global exception handling
+
+**Milestone 2: Sandbox Manager** ✅
+- [x] `ContainerRuntime` port + `DockerContainerRuntime` adapter (docker-java)
+- [x] `SandboxManager`: reuse-if-running / create-if-not, with a Postgres
+      partial-unique-index guard against concurrent double-provisioning
+- [x] Resource-limited containers (memory/CPU/pids caps, dropped
+      capabilities, no-new-privileges, non-root in-container user)
+- [x] Idle-sandbox reaper (`@Scheduled`)
+- [x] Custom sandbox image (Java/Maven, Node/npm, Python/pip, git)
+- [x] Unit tests against a fake `ContainerRuntime`
+
+**Milestone 3 (next): Agent Orchestrator or Auth & User Service**
 - [ ] JWT auth (Auth & User Service)
 - [ ] Real-time streaming (SSE) for task logs
-- [ ] Sandbox Manager (Docker container lifecycle)
 - [ ] Agent Orchestrator (LLM tool-calling loop)
 
 ## Running locally
@@ -58,13 +69,40 @@ curl -X POST http://localhost:8080/api/tasks \
       }'
 ```
 
+### Sandbox Manager
+
+Build the sandbox image once, locally:
+
+```bash
+docker build -t ai-coding-agent-sandbox:latest infra/docker/sandbox
+```
+
+The backend needs access to the Docker socket to manage containers. When
+running the backend outside Docker (e.g. via `./mvnw spring-boot:run` on
+your host), it talks to `unix:///var/run/docker.sock` by default - no extra
+setup needed on Linux. Manual test endpoints while the Orchestrator doesn't
+exist yet:
+
+```bash
+TASK_ID=$(uuidgen)
+
+curl -X POST http://localhost:8080/internal/sandboxes/$TASK_ID/ensure
+
+curl -X POST http://localhost:8080/internal/sandboxes/$TASK_ID/exec \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["git", "--version"]}'
+
+curl -X DELETE http://localhost:8080/internal/sandboxes/$TASK_ID
+```
+
 ## Architecture decisions
 
 - [ADR-0001: PostgreSQL over MySQL](docs/architecture/ADR-0001-postgresql-vs-mysql.md)
 - [ADR-0002: Centralized task state machine](docs/architecture/ADR-0002-task-state-machine.md)
+- [ADR-0003: Sandbox Manager container runtime strategy](docs/architecture/ADR-0003-sandbox-container-strategy.md)
 
 ## Tech stack
 
 - Java 17, Spring Boot 3.3 (Web, Data JPA, Validation, Security, WebSocket)
 - PostgreSQL 16, Flyway migrations
-- Docker (sandbox execution environment - Milestone 3)
+- Docker Engine API via docker-java (sandbox execution environment)

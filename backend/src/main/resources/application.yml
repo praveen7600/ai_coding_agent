@@ -30,6 +30,18 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+sandbox:
+  docker-host: ${SANDBOX_DOCKER_HOST:unix:///var/run/docker.sock}
+  image: ${SANDBOX_IMAGE:ai-coding-agent-sandbox:latest}
+  workspace-dir: /workspace
+  memory-mb: ${SANDBOX_MEMORY_MB:1024}
+  cpu-cores: ${SANDBOX_CPU_CORES:1.0}
+  pids-limit: 256
+  network-mode: ${SANDBOX_NETWORK_MODE:bridge}
+  exec-timeout-seconds: 120
+  idle-timeout-minutes: ${SANDBOX_IDLE_TIMEOUT_MINUTES:30}
+  reaper-interval-ms: 60000
+
 logging:
   level:
     org.hibernate.SQL: debug
