@@ -36,6 +36,19 @@ public class SandboxController {
         return sandboxManager.execute(taskId, request.command());
     }
 
+    /**
+     * Same command execution as /exec, but output chunks are published as
+     * LOG_LINE events on the task's SSE stream (/api/tasks/{taskId}/stream)
+     * as they arrive, instead of only being visible in this response once
+     * the command finishes. This response still carries the final
+     * ExecResult - subscribe to the stream separately (e.g. curl -N) before
+     * calling this to see output live rather than all at once at the end.
+     */
+    @PostMapping("/{taskId}/exec-stream")
+    public ExecResult execStream(@PathVariable UUID taskId, @RequestBody ExecRequest request) {
+        return sandboxManager.executeStreaming(taskId, request.command());
+    }
+
     @DeleteMapping("/{taskId}")
     public void destroy(@PathVariable UUID taskId) {
         sandboxManager.destroy(taskId);

@@ -1,16 +1,18 @@
 package com.praveen.aicodingagent.sandbox.runtime;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.ExecCreateCmdResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Capability;
+import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
-import com.github.dockerjava.core.command.ExecStartResultCallback;
 import com.praveen.aicodingagent.sandbox.SandboxException;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -70,6 +72,13 @@ public class DockerContainerRuntime implements ContainerRuntime {
 
     @Override
     public ExecResult exec(String containerId, List<String> command, String workdir) {
+        // No-op listener: same code path as execStreaming, just nobody
+        // watching the chunks as they arrive.
+        return execStreaming(containerId, command, workdir, (streamType, chunk) -> { });
+    }
+
+    @Override
+    public ExecResult execStreaming(String containerId, List<String> command, String workdir, ExecOutputListener listener) {
         try {
             ExecCreateCmdResponse execCreate = dockerClient.execCreateCmd(containerId)
                     .withCmd(command.toArray(new String[0]))
@@ -81,8 +90,36 @@ public class DockerContainerRuntime implements ContainerRuntime {
             ByteArrayOutputStream stdout = new ByteArrayOutputStream();
             ByteArrayOutputStream stderr = new ByteArrayOutputStream();
 
+            // ExecStartResultCallback (used previously) only buffers into two
+            // streams and hands them back once the exec finishes - fine for
+            // a synchronous exec() but useless for live output. A raw
+            // ResultCallback.Adapter<Frame> gets onNext() called per chunk as
+            // Docker sends it, which is what actually makes exec-streaming
+            // possible; it still fills the same two buffers so the final
+            // ExecResult looks identical to the old exec() for callers that
+            // don't care about live output.
+            ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
+                @Override
+                public void onNext(Frame frame) {
+                    byte[] payload = frame.getPayload();
+                    if (payload == null || payload.length == 0) {
+                        return;
+                    }
+                    String chunk = new String(payload, StandardCharsets.UTF_8);
+                    boolean isStderr = frame.getStreamType() == com.github.dockerjava.api.model.StreamType.STDERR;
+                    if (isStderr) {
+                        stderr.writeBytes(payload);
+                        listener.onChunk(StreamType.STDERR, chunk);
+                    } else {
+                        stdout.writeBytes(payload);
+                        listener.onChunk(StreamType.STDOUT, chunk);
+                    }
+                    super.onNext(frame);
+                }
+            };
+
             boolean completed = dockerClient.execStartCmd(execCreate.getId())
-                    .exec(new ExecStartResultCallback(stdout, stderr))
+                    .exec(callback)
                     .awaitCompletion(DEFAULT_EXEC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (!completed) {
@@ -92,7 +129,7 @@ public class DockerContainerRuntime implements ContainerRuntime {
             Long exitCodeLong = dockerClient.inspectExecCmd(execCreate.getId()).exec().getExitCodeLong();
             int exitCode = exitCodeLong == null ? -1 : exitCodeLong.intValue();
 
-            return new ExecResult(exitCode, stdout.toString(), stderr.toString());
+            return new ExecResult(exitCode, stdout.toString(StandardCharsets.UTF_8), stderr.toString(StandardCharsets.UTF_8));
         } catch (SandboxException e) {
             throw e;
         } catch (Exception e) {

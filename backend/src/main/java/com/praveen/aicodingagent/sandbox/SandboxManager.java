@@ -4,6 +4,7 @@ import com.praveen.aicodingagent.sandbox.runtime.ContainerRuntime;
 import com.praveen.aicodingagent.sandbox.runtime.ContainerSpec;
 import com.praveen.aicodingagent.sandbox.runtime.ExecResult;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -30,11 +31,14 @@ public class SandboxManager {
     private final SandboxRepository sandboxRepository;
     private final ContainerRuntime containerRuntime;
     private final SandboxProperties properties;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public SandboxManager(SandboxRepository sandboxRepository, ContainerRuntime containerRuntime, SandboxProperties properties) {
+    public SandboxManager(SandboxRepository sandboxRepository, ContainerRuntime containerRuntime,
+                           SandboxProperties properties, ApplicationEventPublisher eventPublisher) {
         this.sandboxRepository = sandboxRepository;
         this.containerRuntime = containerRuntime;
         this.properties = properties;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -158,6 +162,27 @@ public class SandboxManager {
     public ExecResult execute(UUID taskId, List<String> command) {
         SandboxContainer sandbox = getOrCreateSandbox(taskId);
         ExecResult result = containerRuntime.exec(sandbox.getContainerId(), command, properties.workspaceDir());
+        sandbox.touch();
+        sandboxRepository.save(sandbox);
+        return result;
+    }
+
+    /**
+     * Same as execute(), but publishes a SandboxLogLineEvent per output
+     * chunk as the command runs, instead of only returning the aggregated
+     * result at the end. Still returns the full ExecResult on completion -
+     * this is what the /internal/sandboxes/{taskId}/exec-stream endpoint
+     * calls, so the HTTP response carries the final exit code/output while
+     * anyone subscribed to /api/tasks/{taskId}/stream sees it arrive live.
+     */
+    public ExecResult executeStreaming(UUID taskId, List<String> command) {
+        SandboxContainer sandbox = getOrCreateSandbox(taskId);
+        ExecResult result = containerRuntime.execStreaming(
+                sandbox.getContainerId(),
+                command,
+                properties.workspaceDir(),
+                (streamType, chunk) -> eventPublisher.publishEvent(new SandboxLogLineEvent(taskId, streamType, chunk))
+        );
         sandbox.touch();
         sandboxRepository.save(sandbox);
         return result;

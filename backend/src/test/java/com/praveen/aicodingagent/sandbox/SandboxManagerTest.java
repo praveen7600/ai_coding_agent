@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
 import java.util.List;
@@ -21,6 +22,9 @@ class SandboxManagerTest {
 
     @Mock
     private SandboxRepository sandboxRepository;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     private FakeContainerRuntime containerRuntime;
     private SandboxManager sandboxManager;
@@ -40,7 +44,7 @@ class SandboxManagerTest {
     @BeforeEach
     void setUp() {
         containerRuntime = new FakeContainerRuntime();
-        sandboxManager = new SandboxManager(sandboxRepository, containerRuntime, PROPERTIES);
+        sandboxManager = new SandboxManager(sandboxRepository, containerRuntime, PROPERTIES, eventPublisher);
     }
 
     private SandboxContainer activeSandbox(UUID taskId, String containerId, SandboxStatus status) {
