@@ -59,6 +59,24 @@ cd backend
 ./mvnw spring-boot:run         # starts the API on :8080
 ```
 
+### Required environment variables
+
+`application.yml` is gitignored (matches how the JWT secret and DB
+credentials are already handled) - set these before running:
+
+| Variable | Used by |
+|---|---|
+| `GEMINI_API_KEY` | `GeminiClient` (orchestrator LLM calls) |
+
+Corresponding `application.yml` snippet:
+
+```yaml
+gemini:
+  api-key: ${GEMINI_API_KEY}
+  model: gemini-2.0-flash
+  request-timeout-seconds: 60
+```
+
 Swagger UI: `http://localhost:8080/swagger-ui.html`
 
 Every endpoint except `/api/auth/**` and Swagger now requires a Bearer
@@ -117,6 +135,7 @@ curl -X DELETE http://localhost:8080/internal/sandboxes/$TASK_ID \
 - [ADR-0002: Centralized task state machine](docs/architecture/ADR-0002-task-state-machine.md)
 - [ADR-0003: Sandbox Manager container runtime strategy](docs/architecture/ADR-0003-sandbox-container-strategy.md)
 - [ADR-0004: Auth & User Service](docs/architecture/ADR-0004-auth-user-service.md)
+- [ADR-0005: LLM Client — raw REST over SDK](docs/architecture/ADR-0005-llm-client.md)
 
 ## Tech stack
 
