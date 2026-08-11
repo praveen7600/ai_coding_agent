@@ -25,6 +25,16 @@ public interface ContainerRuntime {
     /** Runs a command inside a running container and waits for it to finish. */
     ExecResult exec(String containerId, List<String> command, String workdir);
 
+    /**
+     * Same as {@link #exec}, but invokes {@code listener} for every chunk of
+     * stdout/stderr as it arrives instead of only returning the full output
+     * once the command finishes. Still returns the same aggregated
+     * ExecResult at the end - callers that don't care about live output can
+     * keep calling exec() (which now delegates to this with a no-op
+     * listener), so this is additive, not a breaking change to the port.
+     */
+    ExecResult execStreaming(String containerId, List<String> command, String workdir, ExecOutputListener listener);
+
     void stopContainer(String containerId);
 
     void removeContainer(String containerId);

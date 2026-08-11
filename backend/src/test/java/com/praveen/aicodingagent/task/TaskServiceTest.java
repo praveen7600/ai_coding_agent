@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -12,6 +13,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -19,6 +22,9 @@ class TaskServiceTest {
 
     @Mock
     private TaskRepository taskRepository;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private TaskService taskService;
@@ -44,6 +50,17 @@ class TaskServiceTest {
         Task updated = taskService.transitionStatus(task.getId(), owner, TaskStatus.RUNNING);
 
         assertThat(updated.getStatus()).isEqualTo(TaskStatus.RUNNING);
+    }
+
+    @Test
+    void publishesStatusChangedEventOnValidTransition() {
+        UUID owner = UUID.randomUUID();
+        Task task = pendingTask(owner);
+        when(taskRepository.findById(task.getId())).thenReturn(Optional.of(task));
+
+        taskService.transitionStatus(task.getId(), owner, TaskStatus.RUNNING);
+
+        verify(eventPublisher).publishEvent(any(TaskStatusChangedEvent.class));
     }
 
     @Test

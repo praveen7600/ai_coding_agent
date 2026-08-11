@@ -59,6 +59,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith(BEARER_PREFIX)) {
             return Optional.of(header.substring(BEARER_PREFIX.length()));
         }
+        // Browser EventSource cannot set custom request headers, so the SSE
+        // stream endpoint (/api/tasks/{id}/stream) is the one place a token
+        // arrives as a query param instead. Scoped to that path deliberately
+        // - accepting a token-in-URL fallback on every endpoint would mean
+        // JWTs start showing up in access logs and browser history far more
+        // often than necessary. A query param is still not as safe as a
+        // header (it can end up in logs/history for this one endpoint), but
+        // it's the standard, accepted tradeoff for EventSource auth - a
+        // short-lived JWT and HTTPS in production keep the exposure window
+        // small.
+        if (request.getRequestURI().endsWith("/stream")) {
+            String tokenParam = request.getParameter("access_token");
+            if (tokenParam != null && !tokenParam.isBlank()) {
+                return Optional.of(tokenParam);
+            }
+        }
         return Optional.empty();
     }
 }

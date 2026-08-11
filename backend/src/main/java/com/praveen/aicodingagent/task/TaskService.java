@@ -2,6 +2,7 @@ package com.praveen.aicodingagent.task;
 
 import com.praveen.aicodingagent.task.dto.CreateTaskRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class TaskService {
     }
 
     private final TaskRepository taskRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public Task createTask(UUID userId, CreateTaskRequest request) {
@@ -76,6 +78,7 @@ public class TaskService {
         }
 
         task.setStatus(newStatus);
+        eventPublisher.publishEvent(new TaskStatusChangedEvent(taskId, userId, current, newStatus));
         return task; // dirty-checked by JPA within the transaction, no explicit save needed
     }
 
