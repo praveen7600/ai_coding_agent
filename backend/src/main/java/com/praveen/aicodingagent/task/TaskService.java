@@ -86,4 +86,34 @@ public class TaskService {
     public Task cancel(UUID taskId, UUID userId) {
         return transitionStatus(taskId, userId, TaskStatus.CANCELLED);
     }
+
+    /**
+     * Terminal transition used by AgentOrchestrator when the model answers
+     * in text instead of calling a tool. Reuses transitionStatus rather than
+     * setting the status field directly so COMPLETED still goes through the
+     * same ALLOWED_TRANSITIONS check and TaskStatusChangedEvent publish as
+     * every other transition - the orchestrator loop gets no special path
+     * around the state machine.
+     */
+    @Transactional
+    public Task completeWithResult(UUID taskId, UUID userId, String resultSummary) {
+        Task task = transitionStatus(taskId, userId, TaskStatus.COMPLETED);
+        task.setResultSummary(resultSummary);
+        return task; // dirty-checked alongside the status change, same transaction
+    }
+
+    /**
+     * Terminal transition used by AgentOrchestrator when the loop exhausts
+     * its iteration budget or an unrecoverable error (LLM call, sandbox
+     * infra) stops it. Can itself throw InvalidTaskStateTransitionException
+     * if the task already reached a terminal state some other way (e.g. a
+     * user-initiated cancel raced the loop) - callers in the orchestrator
+     * are expected to treat that as "nothing to do", not a new failure.
+     */
+    @Transactional
+    public Task failWithReason(UUID taskId, UUID userId, String reason) {
+        Task task = transitionStatus(taskId, userId, TaskStatus.FAILED);
+        task.setResultSummary(reason);
+        return task;
+    }
 }

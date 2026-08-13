@@ -1,6 +1,7 @@
 package com.praveen.aicodingagent.task;
 
 import com.praveen.aicodingagent.auth.UserPrincipal;
+import com.praveen.aicodingagent.orchestrator.AgentOrchestrator;
 import com.praveen.aicodingagent.task.dto.CreateTaskRequest;
 import com.praveen.aicodingagent.task.dto.TaskResponse;
 import jakarta.validation.Valid;
@@ -28,6 +29,7 @@ import java.util.UUID;
 public class TaskController {
 
     private final TaskService taskService;
+    private final AgentOrchestrator agentOrchestrator;
 
     @PostMapping
     public ResponseEntity<TaskResponse> createTask(
@@ -63,5 +65,27 @@ public class TaskController {
             @PathVariable UUID id
     ) {
         return TaskResponse.from(taskService.cancel(id, principal.getId()));
+    }
+
+    /**
+     * Starts the agent loop for a task. The PENDING -> RUNNING transition
+     * happens synchronously here, deliberately, before AgentOrchestrator.run()
+     * is handed off to its own thread pool (see AsyncConfig): if the task is
+     * already running, done, or doesn't belong to this user, the caller gets
+     * that error back on this request instead of it being silently lost
+     * inside a fire-and-forget @Async void method. Everything past this
+     * point in the task's lifecycle - TOOL_CALLING/RUNNING cycles,
+     * COMPLETED/FAILED - is watched over the SSE stream (GET
+     * /api/tasks/{id}/stream), not this response.
+     */
+    @PostMapping("/{id}/execute")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public TaskResponse executeTask(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID id
+    ) {
+        Task task = taskService.transitionStatus(id, principal.getId(), TaskStatus.RUNNING);
+        agentOrchestrator.run(id);
+        return TaskResponse.from(task);
     }
 }
