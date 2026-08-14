@@ -27,8 +27,32 @@ public sealed interface ConversationTurn
     record ModelText(String text) implements ConversationTurn, ModelTurn {
     }
 
-    /** The model deciding to call a tool instead of answering. Gemini role: "model". */
-    record ModelFunctionCall(String name, Map<String, Object> args) implements ConversationTurn, ModelTurn {
+    /**
+     * The model deciding to call a tool instead of answering. Gemini role:
+     * "model".
+     *
+     * thoughtSignature is nullable and opaque - Gemini's thinking models
+     * (2.5/3.x series) attach it to a functionCall part and require it to
+     * be echoed back byte-for-byte in the next request's history, or the
+     * follow-up call fails with a 400 ("Function call is missing a
+     * thought_signature"). Non-thinking models simply never send one, so
+     * null here just means "nothing to round-trip" - see
+     * GeminiClient#toContentNode and #parseResponse for where it's read
+     * and written. The 2-arg constructor exists for callers (tests, mainly)
+     * that build a ModelFunctionCall directly rather than parsing one out
+     * of a real Gemini response and have no signature to preserve.
+     *
+     * Only the first functionCall part of a response carries a signature
+     * when the model returns several in parallel - GeminiClient only reads
+     * candidates[0].content.parts[0] today, so parallel function calls
+     * aren't handled at all yet, signature or not. Out of scope for this
+     * fix.
+     */
+    record ModelFunctionCall(String name, Map<String, Object> args, String thoughtSignature)
+            implements ConversationTurn, ModelTurn {
+        public ModelFunctionCall(String name, Map<String, Object> args) {
+            this(name, args, null);
+        }
     }
 
     /**

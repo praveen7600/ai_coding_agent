@@ -112,9 +112,18 @@ public class GeminiClient implements LlmClient {
             parts.addObject().put("text", modelText.text());
         } else if (turn instanceof ConversationTurn.ModelFunctionCall functionCall) {
             content.put("role", "model");
-            ObjectNode functionCallNode = parts.addObject().putObject("functionCall");
+            ObjectNode part = parts.addObject();
+            ObjectNode functionCallNode = part.putObject("functionCall");
             functionCallNode.put("name", functionCall.name());
             functionCallNode.set("args", objectMapper.valueToTree(functionCall.args()));
+            // thoughtSignature lives on the part itself, as a sibling of
+            // "functionCall" - not nested inside it. Omitted entirely when
+            // null (non-thinking model, or a test-constructed turn) rather
+            // than sent as an explicit JSON null, since Gemini's docs only
+            // ever show the field present-with-a-value or absent.
+            if (functionCall.thoughtSignature() != null) {
+                part.put("thoughtSignature", functionCall.thoughtSignature());
+            }
         } else if (turn instanceof ConversationTurn.FunctionResult functionResult) {
             // Gemini has no dedicated "tool" role in generateContent -
             // function results ride back in as a user turn. See
@@ -149,7 +158,13 @@ public class GeminiClient implements LlmClient {
             Map<String, Object> args = argsNode.isMissingNode() || argsNode.isNull()
                     ? Map.of()
                     : objectMapper.convertValue(argsNode, new TypeReference<Map<String, Object>>() { });
-            return new ConversationTurn.ModelFunctionCall(name, args);
+            // thoughtSignature is a sibling of "functionCall" on the part,
+            // not a field inside it - see ConversationTurn.ModelFunctionCall's
+            // javadoc for why this needs to survive the round trip at all.
+            String thoughtSignature = firstPart.hasNonNull("thoughtSignature")
+                    ? firstPart.get("thoughtSignature").asText()
+                    : null;
+            return new ConversationTurn.ModelFunctionCall(name, args, thoughtSignature);
         }
 
         if (firstPart.has("text")) {
