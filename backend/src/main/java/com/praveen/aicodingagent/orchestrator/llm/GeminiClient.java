@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -18,6 +19,8 @@ import org.springframework.web.client.RestClientResponseException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Deliberately raw: builds the request JSON tree by hand with Jackson
@@ -39,6 +42,21 @@ public class GeminiClient implements LlmClient {
 
     private static final String BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
+    /**
+     * Free-tier 429s are the normal case under load, not an infrastructure
+     * failure - the API even tells us how long to wait via retryDelay in
+     * the error body. Retrying a couple of times with that delay (falling
+     * back to a fixed wait if the body doesn't have one) turns a transient
+     * quota blip into one extra second of latency instead of an
+     * "Agent failed unexpectedly" for the whole task. Bounded at 3 attempts
+     * so a genuinely exhausted quota still fails fast rather than hanging
+     * the orchestrator loop.
+     */
+    private static final int MAX_RETRY_ATTEMPTS = 3;
+    private static final Duration DEFAULT_RETRY_DELAY = Duration.ofSeconds(20);
+    private static final Pattern RETRY_DELAY_PATTERN =
+            Pattern.compile("\"retryDelay\"\\s*:\\s*\"(\\d+)s\"");
+
     private final RestClient restClient;
     private final GeminiProperties properties;
     private final ObjectMapper objectMapper;
@@ -56,25 +74,55 @@ public class GeminiClient implements LlmClient {
     public ModelTurn generate(List<ConversationTurn> history, List<ToolDefinition> tools) {
         ObjectNode requestBody = buildRequestBody(history, tools);
 
-        JsonNode response;
-        try {
-            response = restClient.post()
-                    .uri("/{model}:generateContent", properties.model())
-                    .header("x-goog-api-key", properties.apiKey())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(requestBody)
-                    .retrieve()
-                    .body(JsonNode.class);
-        } catch (RestClientResponseException e) {
-            // Gemini returns a JSON error body with useful detail (invalid
-            // key, quota exceeded, malformed schema) - surface it instead of
-            // just the HTTP status, since that body is usually the fastest
-            // way to diagnose a bad request while building this out.
-            throw new LlmClientException(
-                    "Gemini API call failed: " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
+        for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            try {
+                JsonNode response = restClient.post()
+                        .uri("/{model}:generateContent", properties.model())
+                        .header("x-goog-api-key", properties.apiKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(requestBody)
+                        .retrieve()
+                        .body(JsonNode.class);
+                return parseResponse(response);
+            } catch (RestClientResponseException e) {
+                boolean isLastAttempt = attempt == MAX_RETRY_ATTEMPTS;
+                if (e.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS && !isLastAttempt) {
+                    Duration delay = retryDelayFrom(e.getResponseBodyAsString());
+                    log.warn("Gemini rate limited (attempt {}/{}), retrying in {}",
+                            attempt, MAX_RETRY_ATTEMPTS, delay);
+                    sleep(delay);
+                    continue;
+                }
+                // Gemini returns a JSON error body with useful detail (invalid
+                // key, quota exceeded, malformed schema) - surface it instead of
+                // just the HTTP status, since that body is usually the fastest
+                // way to diagnose a bad request while building this out.
+                throw new LlmClientException(
+                        "Gemini API call failed: " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
+            }
         }
+        // Unreachable: the loop above always either returns or throws.
+        throw new LlmClientException("Gemini API call failed after " + MAX_RETRY_ATTEMPTS + " attempts");
+    }
 
-        return parseResponse(response);
+    private Duration retryDelayFrom(String responseBody) {
+        if (responseBody == null) {
+            return DEFAULT_RETRY_DELAY;
+        }
+        Matcher matcher = RETRY_DELAY_PATTERN.matcher(responseBody);
+        if (matcher.find()) {
+            return Duration.ofSeconds(Long.parseLong(matcher.group(1)));
+        }
+        return DEFAULT_RETRY_DELAY;
+    }
+
+    private void sleep(Duration delay) {
+        try {
+            Thread.sleep(delay.toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new LlmClientException("Interrupted while waiting to retry Gemini call", e);
+        }
     }
 
     private ObjectNode buildRequestBody(List<ConversationTurn> history, List<ToolDefinition> tools) {
