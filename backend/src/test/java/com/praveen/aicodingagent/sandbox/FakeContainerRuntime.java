@@ -22,6 +22,7 @@ public class FakeContainerRuntime implements ContainerRuntime {
 
     private final AtomicInteger counter = new AtomicInteger();
     private final Set<String> runningContainers = new HashSet<>();
+    private final List<List<String>> execCommands = new java.util.ArrayList<>();
 
     @Override
     public String createContainer(ContainerSpec spec) {
@@ -39,7 +40,13 @@ public class FakeContainerRuntime implements ContainerRuntime {
         if (!runningContainers.contains(containerId)) {
             throw new SandboxException("exec on non-running container " + containerId);
         }
+        execCommands.add(command);
         return new ExecResult(0, "ok", "");
+    }
+
+    /** Test hook: every command run via exec(), in order - lets tests assert the clone step happened. */
+    public List<List<String>> execCommands() {
+        return execCommands;
     }
 
     @Override

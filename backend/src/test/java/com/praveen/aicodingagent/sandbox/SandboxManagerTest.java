@@ -6,6 +6,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import com.praveen.aicodingagent.task.Task;
+import com.praveen.aicodingagent.task.TaskRepository;
 
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +28,9 @@ class SandboxManagerTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private TaskRepository taskRepository;
+
     private FakeContainerRuntime containerRuntime;
     private SandboxManager sandboxManager;
 
@@ -44,7 +49,15 @@ class SandboxManagerTest {
     @BeforeEach
     void setUp() {
         containerRuntime = new FakeContainerRuntime();
-        sandboxManager = new SandboxManager(sandboxRepository, containerRuntime, PROPERTIES, eventPublisher);
+        sandboxManager = new SandboxManager(sandboxRepository, containerRuntime, PROPERTIES, eventPublisher, taskRepository);
+    }
+
+    private void stubTaskWithRepo(UUID taskId) {
+        Task task = Task.builder()
+                .id(taskId)
+                .repoUrl("https://github.com/praveen7600/ai_coding_agent")
+                .build();
+        when(taskRepository.findById(taskId)).thenReturn(Optional.of(task));
     }
 
     private SandboxContainer activeSandbox(UUID taskId, String containerId, SandboxStatus status) {
@@ -62,6 +75,7 @@ class SandboxManagerTest {
     @Test
     void createsNewSandboxWhenNoneExists() {
         UUID taskId = UUID.randomUUID();
+        stubTaskWithRepo(taskId);
         when(sandboxRepository.findByTaskIdAndStatusIn(eq(taskId), any())).thenReturn(Optional.empty());
         when(sandboxRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
         when(sandboxRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -71,6 +85,21 @@ class SandboxManagerTest {
         assertThat(result.getStatus()).isEqualTo(SandboxStatus.RUNNING);
         assertThat(result.getContainerId()).isNotNull();
         assertThat(containerRuntime.isRunning(result.getContainerId())).isTrue();
+    }
+
+    @Test
+    void clonesTaskRepoIntoFreshSandboxBeforeMarkingItRunning() {
+        UUID taskId = UUID.randomUUID();
+        stubTaskWithRepo(taskId);
+        when(sandboxRepository.findByTaskIdAndStatusIn(eq(taskId), any())).thenReturn(Optional.empty());
+        when(sandboxRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sandboxRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        sandboxManager.getOrCreateSandbox(taskId);
+
+        assertThat(containerRuntime.execCommands()).hasSize(1);
+        List<String> cloneCommand = containerRuntime.execCommands().get(0);
+        assertThat(cloneCommand).contains("git", "clone", "https://github.com/praveen7600/ai_coding_agent");
     }
 
     @Test
@@ -93,6 +122,7 @@ class SandboxManagerTest {
     @Test
     void reprovisionsWhenDbSaysRunningButDockerDisagrees() {
         UUID taskId = UUID.randomUUID();
+        stubTaskWithRepo(taskId);
         String deadContainerId = "fake-container-dead";
         SandboxContainer existing = activeSandbox(taskId, deadContainerId, SandboxStatus.RUNNING);
         // Note: never started in containerRuntime, so isRunning() is false - simulates drift.

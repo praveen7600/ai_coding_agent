@@ -3,6 +3,9 @@ package com.praveen.aicodingagent.sandbox;
 import com.praveen.aicodingagent.sandbox.runtime.ContainerRuntime;
 import com.praveen.aicodingagent.sandbox.runtime.ContainerSpec;
 import com.praveen.aicodingagent.sandbox.runtime.ExecResult;
+import com.praveen.aicodingagent.task.Task;
+import com.praveen.aicodingagent.task.TaskNotFoundException;
+import com.praveen.aicodingagent.task.TaskRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -32,13 +35,16 @@ public class SandboxManager {
     private final ContainerRuntime containerRuntime;
     private final SandboxProperties properties;
     private final ApplicationEventPublisher eventPublisher;
+    private final TaskRepository taskRepository;
 
     public SandboxManager(SandboxRepository sandboxRepository, ContainerRuntime containerRuntime,
-                           SandboxProperties properties, ApplicationEventPublisher eventPublisher) {
+                           SandboxProperties properties, ApplicationEventPublisher eventPublisher,
+                           TaskRepository taskRepository) {
         this.sandboxRepository = sandboxRepository;
         this.containerRuntime = containerRuntime;
         this.properties = properties;
         this.eventPublisher = eventPublisher;
+        this.taskRepository = taskRepository;
     }
 
     /**
@@ -118,6 +124,7 @@ public class SandboxManager {
 
             String containerId = containerRuntime.createContainer(spec);
             containerRuntime.startContainer(containerId);
+            cloneRepository(containerId, taskId);
 
             record.setContainerId(containerId);
             record.setStatus(SandboxStatus.RUNNING);
@@ -128,6 +135,42 @@ public class SandboxManager {
             sandboxRepository.save(record);
             throw new SandboxException("Failed to provision sandbox for task " + taskId, e);
         }
+    }
+
+    /**
+     * This is the fix for the "agent runs `find /` and burns its whole
+     * iteration/quota budget just locating the repo" failure mode: a fresh
+     * sandbox previously started as an empty container at workspaceDir with
+     * nothing checked out, so every task's first several tool calls were
+     * the model rediscovering that fact for itself, one wasted Gemini call
+     * at a time. Cloning here means the very first run_command the agent
+     * issues already has real source to work with.
+     *
+     * Runs once, right after the container starts and before the sandbox
+     * is handed back as RUNNING - not lazily on first exec() - so a clone
+     * failure surfaces as a normal provisioning failure (same catch block,
+     * same FAILED status) rather than as a confusing mid-task error the
+     * model has to interpret.
+     */
+    private void cloneRepository(String containerId, UUID taskId) {
+        Task task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new TaskNotFoundException(taskId));
+        String repoUrl = task.getRepoUrl();
+
+        // sh -c with the URL passed as a single element of the exec argv
+        // (not string-concatenated into a shell one-liner Java assembles
+        // itself) - repoUrl is already constrained by CreateTaskRequest's
+        // GitHub-HTTPS regex, but there's no reason to rely on that alone
+        // when the exec API lets each arg stay a separate token.
+        List<String> command = List.of(
+                "git", "clone", "--depth", "1", repoUrl, properties.workspaceDir()
+        );
+        ExecResult result = containerRuntime.exec(containerId, command, properties.workspaceDir());
+        if (!result.isSuccess()) {
+            throw new SandboxException("Failed to clone repository " + repoUrl + " for task " + taskId
+                    + " (exit " + result.exitCode() + "): " + result.stderr());
+        }
+        log.info("Cloned {} into sandbox {} for task {}", repoUrl, containerId, taskId);
     }
 
     /**

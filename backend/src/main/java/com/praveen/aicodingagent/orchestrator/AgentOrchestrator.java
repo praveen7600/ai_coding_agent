@@ -129,8 +129,24 @@ public class AgentOrchestrator {
         }
     }
 
+    /**
+     * Tells the model up front that its repo is already checked out at the
+     * workspace root, rather than leaving it to discover that with tool
+     * calls. Before this, the very first request would burn several
+     * generateContent round trips on the model doing its own `find`/`ls`
+     * reconnaissance (or worse, scanning outside the workspace) just to
+     * learn what SandboxManager.cloneRepository() already guarantees is
+     * true - wasted iterations against the MAX_ITERATIONS budget and,
+     * concretely, wasted Gemini quota for a trivial task.
+     */
     String buildPrompt(Task task) {
-        StringBuilder prompt = new StringBuilder(task.getTitle());
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("The repository ").append(task.getRepoUrl())
+                .append(" is already cloned at the root of your working directory. ")
+                .append("Do not search outside the working directory, and don't run `find /` or ")
+                .append("similar filesystem-wide scans - `find .` (or `ls`, `cat`, etc. from the ")
+                .append("working directory) is enough to explore it.\n\n");
+        prompt.append("Task: ").append(task.getTitle());
         if (task.getDescription() != null && !task.getDescription().isBlank()) {
             prompt.append("\n\n").append(task.getDescription());
         }
