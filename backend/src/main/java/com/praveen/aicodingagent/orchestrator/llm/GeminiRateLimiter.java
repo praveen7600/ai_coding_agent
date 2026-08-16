@@ -1,6 +1,7 @@
 package com.praveen.aicodingagent.orchestrator.llm;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -51,6 +52,18 @@ public class GeminiRateLimiter {
     private final Semaphore permits;
     private final long acquireTimeoutSeconds;
 
+    /**
+     * @Autowired is required here, not decorative: with a second
+     * (package-private, test-only) constructor also present, Spring has
+     * two candidates and no way to infer which one is the injection
+     * point. Without this annotation it doesn't fall back to "use the
+     * public one" - it looks for a no-arg default constructor instead,
+     * finds none, and fails bean creation with
+     * NoSuchMethodException: GeminiRateLimiter.<init>(). Spring only
+     * auto-selects a constructor with no annotation when exactly one
+     * constructor exists.
+     */
+    @Autowired
     public GeminiRateLimiter(GeminiProperties properties) {
         // Generous relative to the 1-minute refill window: a caller can
         // wait through a couple of refill cycles before this gives up,
@@ -62,7 +75,8 @@ public class GeminiRateLimiter {
     /**
      * Package-private: lets tests use a short timeout instead of waiting
      * out the real 150s one to prove the "gives up eventually" behavior.
-     * Production code always goes through the single-arg constructor.
+     * Production code always goes through the single-arg constructor
+     * above (the @Autowired one).
      */
     GeminiRateLimiter(GeminiProperties properties, long acquireTimeoutSeconds) {
         this.maxRequestsPerMinute = properties.maxRequestsPerMinute();
