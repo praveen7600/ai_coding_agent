@@ -23,10 +23,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Run it with:
  *   GEMINI_API_KEY=your-key ./mvnw test -Dtest=GeminiClientManualTest
  *
- * No Spring context needed - GeminiClient's three dependencies
- * (RestClient.Builder, GeminiProperties, ObjectMapper) are all plain objects
- * you can construct by hand, which is exactly the "complete isolation" step
- * 2 asked for.
+ * No Spring context needed - GeminiClient's four dependencies
+ * (RestClient.Builder, GeminiProperties, ObjectMapper, GeminiRateLimiter)
+ * are all plain objects you can construct by hand, which is exactly the
+ * "complete isolation" step 2 asked for. GeminiRateLimiter is built with a
+ * generous per-minute cap here (well above what these two sequential
+ * calls need) since these tests are checking wire correctness, not
+ * exercising the throttle itself.
  */
 class GeminiClientManualTest {
 
@@ -36,8 +39,9 @@ class GeminiClientManualTest {
         String apiKey = System.getenv("GEMINI_API_KEY");
         String model = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.0-flash");
 
-        GeminiProperties properties = new GeminiProperties(apiKey, model, 60);
-        GeminiClient client = new GeminiClient(RestClient.builder(), properties, new ObjectMapper());
+        GeminiProperties properties = new GeminiProperties(apiKey, model, 60, 8);
+        GeminiClient client = new GeminiClient(
+                RestClient.builder(), properties, new ObjectMapper(), new GeminiRateLimiter(properties));
 
         ModelTurn result = client.generate(
                 List.of(new ConversationTurn.UserMessage("Reply with exactly the words: hello world")),
@@ -69,8 +73,9 @@ class GeminiClientManualTest {
         String apiKey = System.getenv("GEMINI_API_KEY");
         String model = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.0-flash");
 
-        GeminiProperties properties = new GeminiProperties(apiKey, model, 60);
-        GeminiClient client = new GeminiClient(RestClient.builder(), properties, new ObjectMapper());
+        GeminiProperties properties = new GeminiProperties(apiKey, model, 60, 8);
+        GeminiClient client = new GeminiClient(
+                RestClient.builder(), properties, new ObjectMapper(), new GeminiRateLimiter(properties));
 
         ToolDefinition echoTool = new ToolDefinition(
                 "echo",

@@ -60,10 +60,13 @@ public class GeminiClient implements LlmClient {
     private final RestClient restClient;
     private final GeminiProperties properties;
     private final ObjectMapper objectMapper;
+    private final GeminiRateLimiter rateLimiter;
 
-    public GeminiClient(RestClient.Builder restClientBuilder, GeminiProperties properties, ObjectMapper objectMapper) {
+    public GeminiClient(RestClient.Builder restClientBuilder, GeminiProperties properties,
+                         ObjectMapper objectMapper, GeminiRateLimiter rateLimiter) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.rateLimiter = rateLimiter;
         this.restClient = restClientBuilder
                 .baseUrl(BASE_URL)
                 .requestFactory(clientRequestFactory(properties.requestTimeoutSeconds()))
@@ -75,6 +78,13 @@ public class GeminiClient implements LlmClient {
         ObjectNode requestBody = buildRequestBody(history, tools);
 
         for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            // Proactive, not just reactive: wait for a shared budget slot
+            // before every attempt, including retries after a 429. Without
+            // this, a retry can land in the exact same window that just
+            // rejected a different thread's call and get 429'd again -
+            // see GeminiRateLimiter's javadoc for why per-call retry alone
+            // isn't enough once AsyncConfig runs tasks concurrently.
+            rateLimiter.acquire();
             try {
                 JsonNode response = restClient.post()
                         .uri("/{model}:generateContent", properties.model())

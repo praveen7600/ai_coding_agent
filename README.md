@@ -75,7 +75,18 @@ gemini:
   api-key: ${GEMINI_API_KEY}
   model: gemini-2.0-flash
   request-timeout-seconds: 60
+  max-requests-per-minute: 8
 ```
+
+`max-requests-per-minute` bounds `GeminiRateLimiter`, a shared budget every
+orchestrator thread waits on before calling Gemini - proactive, not just a
+retry after a 429 already happened. Defaults to 8 if omitted, which leaves
+margin under the free tier's ~10-15 RPM ceiling. Without this, running a
+couple of tasks close together (`agentTaskExecutor` allows up to 4
+concurrent orchestrator loops) can burst past the quota even for small
+tasks, since each loop's own 429 retry has no visibility into what the
+others are doing. Lower it further (e.g. `4`) if you're still seeing 429s
+during development, or raise it if you've moved to a paid tier.
 
 Swagger UI: `http://localhost:8080/swagger-ui.html`
 
