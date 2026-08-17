@@ -28,10 +28,31 @@ import java.util.UUID;
  * Genuine infrastructure failure (SandboxException - Docker unreachable,
  * container crashed) is allowed to propagate, because that's not something
  * the model calling the tool again can fix.
+ *
+ * Output truncation, deliberately here rather than in DockerContainerRuntime:
+ * this is the seam where "sandbox output" becomes "conversation history",
+ * and generateContent resends the FULL history on every call (see
+ * AgentOrchestrator's javadoc). A large task's build/test output that goes
+ * untruncated here gets resent, in full, on every subsequent iteration of
+ * that same task - the token cost compounds with iteration count in a way
+ * a small task's short-lived commands never trigger. Truncating at the
+ * point output enters history (not at the Docker layer) keeps the SSE log
+ * stream and any raw-output debugging unaffected; only what the model sees
+ * next turn is capped.
  */
 @Component
 @RequiredArgsConstructor
 public class ToolExecutor {
+
+    /**
+     * Kept well under Gemini's actual context window - this isn't a
+     * "fits in the model" limit, it's a "don't let one chatty command eat
+     * the whole per-task token budget" limit. Applied per stream (stdout
+     * and stderr each get their own budget) so a command that fails with a
+     * short, useful stderr but a huge stdout doesn't lose the stderr to
+     * truncation math.
+     */
+    private static final int MAX_OUTPUT_CHARS = 8_000;
 
     private final SandboxManager sandboxManager;
 
@@ -58,10 +79,30 @@ public class ToolExecutor {
                 call.name(),
                 Map.of(
                         "exitCode", result.exitCode(),
-                        "stdout", result.stdout(),
-                        "stderr", result.stderr()
+                        "stdout", truncate(result.stdout()),
+                        "stderr", truncate(result.stderr())
                 )
         );
+    }
+
+    /**
+     * Head + tail rather than a plain head cutoff: for a failing build or
+     * test run, the actionable error is almost always at the END of the
+     * output (the final stack trace / assertion failure), while the
+     * beginning is often just setup noise (dependency resolution, compiler
+     * banners). Keeping both ends and cutting the (usually less useful)
+     * middle gives the model the best shot at both "what command produced
+     * this" context and "what actually failed" in a fixed budget.
+     */
+    private String truncate(String output) {
+        if (output == null || output.length() <= MAX_OUTPUT_CHARS) {
+            return output;
+        }
+        int half = MAX_OUTPUT_CHARS / 2;
+        String head = output.substring(0, half);
+        String tail = output.substring(output.length() - half);
+        int omitted = output.length() - MAX_OUTPUT_CHARS;
+        return head + "\n[... " + omitted + " characters truncated ...]\n" + tail;
     }
 
     private ConversationTurn.FunctionResult errorResult(String toolName, String message) {

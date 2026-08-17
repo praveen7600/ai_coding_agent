@@ -140,6 +140,32 @@ curl -X DELETE http://localhost:8080/internal/sandboxes/$TASK_ID \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+### Large tasks vs. small tasks
+
+Three config knobs directly affect whether a large, multi-step task can
+finish, as opposed to a quick single-file change:
+
+| Property | Default | What it controls |
+|---|---|---|
+| `orchestrator.max-iterations` | 20 | How many model round-trips `AgentOrchestrator`'s loop allows before giving up and failing the task. A large task (explore, edit several files, build, fix a compile error, test, fix a failing test) can easily need more turns than a small one - this was hardcoded at 8 originally, which failed exactly that kind of task with "Agent did not produce a final answer within 8 iterations." |
+| `sandbox.exec-timeout-seconds` | 300 | How long a single `run_command` call is allowed to run before it's treated as timed out. Applies per-command, not per-task - a large task running a real build/test suite is far more likely to hit this than `echo` or `cat`. A timeout now comes back as a normal (if unsuccessful) tool observation the model can react to, not a thrown exception that kills the whole task. |
+| `gemini.max-requests-per-minute` | 8 | Shared budget every orchestrator thread waits on before calling Gemini - see `GeminiRateLimiter`. More iterations means more Gemini calls per task, so a low value here can slow a large task down (it waits for a slot) without failing it outright. |
+
+Tool output (stdout/stderr) is also capped at 8,000 characters per stream
+before being added to the conversation history - `ToolExecutor` keeps the
+head and tail and drops the middle, since a failing build's actionable
+error is almost always at the end. This matters more for large tasks: their
+commands tend to produce more output, and `generateContent` resends the
+full history on every call, so untruncated output compounds in token cost
+as a task's iteration count grows.
+
+```yaml
+orchestrator:
+  max-iterations: 20
+sandbox:
+  exec-timeout-seconds: 300
+```
+
 ## Architecture decisions
 
 - [ADR-0001: PostgreSQL over MySQL](docs/architecture/ADR-0001-postgresql-vs-mysql.md)

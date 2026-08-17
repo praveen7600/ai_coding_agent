@@ -15,6 +15,7 @@ import com.praveen.aicodingagent.task.TaskService;
 import com.praveen.aicodingagent.task.TaskStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -42,17 +43,8 @@ import java.util.UUID;
 @Component
 @RequiredArgsConstructor
 @Slf4j
+@EnableConfigurationProperties(OrchestratorProperties.class)
 public class AgentOrchestrator {
-
-    /**
-     * Picked deliberately before building this, not discovered mid-runaway-
-     * loop: generateContent resends the full history every call, so this
-     * bounds both API cost and worst-case wall-clock time per task. 8 gives
-     * the model room for a few exploratory commands and at least one retry
-     * after a failed one, without a confused loop running indefinitely
-     * against someone's Gemini quota.
-     */
-    private static final int MAX_ITERATIONS = 8;
 
     private final LlmClient llmClient;
     private final ToolCatalog toolCatalog;
@@ -60,6 +52,7 @@ public class AgentOrchestrator {
     private final TaskService taskService;
     private final TaskRepository taskRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final OrchestratorProperties properties;
 
     @Async("agentTaskExecutor")
     public void run(UUID taskId) {
@@ -69,9 +62,10 @@ public class AgentOrchestrator {
 
         List<ConversationTurn> history = new ArrayList<>();
         history.add(new ConversationTurn.UserMessage(buildPrompt(task)));
+        int maxIterations = properties.effectiveMaxIterations();
 
         try {
-            for (int iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+            for (int iteration = 1; iteration <= maxIterations; iteration++) {
                 ModelTurn turn = llmClient.generate(history, toolCatalog.availableTools());
                 // Safe: ModelTurn is implemented only by ConversationTurn.ModelText
                 // and ConversationTurn.ModelFunctionCall (see ModelTurn's javadoc),
@@ -95,9 +89,9 @@ public class AgentOrchestrator {
                 taskService.transitionStatus(taskId, userId, TaskStatus.RUNNING);
             }
 
-            log.warn("Task {} exhausted {} iterations without a final text answer", taskId, MAX_ITERATIONS);
+            log.warn("Task {} exhausted {} iterations without a final text answer", taskId, maxIterations);
             taskService.failWithReason(taskId, userId,
-                    "Agent did not produce a final answer within " + MAX_ITERATIONS + " iterations");
+                    "Agent did not produce a final answer within " + maxIterations + " iterations");
         } catch (InvalidTaskStateTransitionException e) {
             // The task reached a terminal state from outside this loop -
             // most likely a user-initiated cancel racing an in-flight
@@ -136,7 +130,7 @@ public class AgentOrchestrator {
      * generateContent round trips on the model doing its own `find`/`ls`
      * reconnaissance (or worse, scanning outside the workspace) just to
      * learn what SandboxManager.cloneRepository() already guarantees is
-     * true - wasted iterations against the MAX_ITERATIONS budget and,
+     * true - wasted iterations against the iteration budget and,
      * concretely, wasted Gemini quota for a trivial task.
      */
     String buildPrompt(Task task) {

@@ -14,9 +14,9 @@ import java.util.List;
  * In-memory fake standing in for GeminiClient, same reasoning as
  * FakeContainerRuntime for SandboxManager's tests: AgentOrchestrator's loop
  * logic (does it stop on ModelText, does it feed a FunctionResult back in,
- * does it give up after MAX_ITERATIONS) gets tested against a scripted
- * sequence of real ModelTurn values instead of a mock returning canned
- * objects for a method that's called in a loop.
+ * does it give up after the configured max iterations) gets tested against
+ * a scripted sequence of real ModelTurn values instead of a mock returning
+ * canned objects for a method that's called in a loop.
  */
 public class FakeLlmClient implements LlmClient {
 

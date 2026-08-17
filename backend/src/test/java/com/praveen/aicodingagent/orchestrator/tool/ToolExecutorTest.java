@@ -108,4 +108,75 @@ class ToolExecutorTest {
         assertThat(result.result()).containsKey("error");
         verifyNoInteractions(sandboxManager);
     }
+
+    @Test
+    void shortOutputIsPassedThroughUnchanged() {
+        UUID taskId = UUID.randomUUID();
+        when(sandboxManager.executeStreaming(eq(taskId), any()))
+                .thenReturn(new ExecResult(0, "short output", "short error"));
+
+        ConversationTurn.FunctionResult result = toolExecutor.execute(
+                taskId,
+                new ConversationTurn.ModelFunctionCall(ToolCatalog.RUN_COMMAND, Map.of("command", "echo hi"))
+        );
+
+        // Below the truncation threshold - must come back byte-for-byte
+        // identical, not merely "close enough".
+        assertThat(result.result()).containsEntry("stdout", "short output");
+        assertThat(result.result()).containsEntry("stderr", "short error");
+    }
+
+    @Test
+    void largeOutputIsTruncatedKeepingHeadAndTail() {
+        // Large tasks are the ones that actually produce output this big -
+        // a verbose build/test log - so this is the direct regression test
+        // for "large tasks fail because their own tool output balloons the
+        // context sent back to Gemini every subsequent iteration".
+        UUID taskId = UUID.randomUUID();
+        String head = "BUILD STARTED\n";
+        String middle = "x".repeat(50_000);
+        String tail = "\nFAILED: AssertionError at OrderServiceTest.java:42";
+        String hugeStdout = head + middle + tail;
+
+        when(sandboxManager.executeStreaming(eq(taskId), any()))
+                .thenReturn(new ExecResult(1, hugeStdout, ""));
+
+        ConversationTurn.FunctionResult result = toolExecutor.execute(
+                taskId,
+                new ConversationTurn.ModelFunctionCall(ToolCatalog.RUN_COMMAND, Map.of("command", "mvn test"))
+        );
+
+        String truncated = (String) result.result().get("stdout");
+        // Must be meaningfully smaller than the original - proves
+        // truncation actually happened, not just that the string changed.
+        assertThat(truncated.length()).isLessThan(hugeStdout.length() / 2);
+        // The two things a model needs to diagnose a failing build: what
+        // command produced this, and what the actual failure was. Losing
+        // either to truncation would defeat the point.
+        assertThat(truncated).startsWith(head);
+        assertThat(truncated).endsWith(tail);
+        assertThat(truncated).contains("truncated");
+    }
+
+    @Test
+    void truncationAppliesIndependentlyToStdoutAndStderr() {
+        // A command can fail with a short, useful stderr but a huge,
+        // mostly-irrelevant stdout (e.g. a verbose build tool). Each
+        // stream needs its own budget so the short stderr never gets
+        // squeezed out by stdout eating a shared one.
+        UUID taskId = UUID.randomUUID();
+        String hugeStdout = "y".repeat(50_000);
+        String shortStderr = "compilation failed: missing semicolon on line 12";
+
+        when(sandboxManager.executeStreaming(eq(taskId), any()))
+                .thenReturn(new ExecResult(1, hugeStdout, shortStderr));
+
+        ConversationTurn.FunctionResult result = toolExecutor.execute(
+                taskId,
+                new ConversationTurn.ModelFunctionCall(ToolCatalog.RUN_COMMAND, Map.of("command", "javac Main.java"))
+        );
+
+        assertThat(result.result()).containsEntry("stderr", shortStderr);
+        assertThat(((String) result.result().get("stdout")).length()).isLessThan(hugeStdout.length());
+    }
 }

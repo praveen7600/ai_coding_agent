@@ -9,6 +9,7 @@ import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import com.praveen.aicodingagent.sandbox.SandboxException;
+import com.praveen.aicodingagent.sandbox.SandboxProperties;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -20,13 +21,21 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class DockerContainerRuntime implements ContainerRuntime {
 
-    /** Commands longer than this are killed rather than left to hang the exec loop forever. */
-    private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 120;
+    /**
+     * Standard shell convention (same code GNU `timeout` uses) for "ran out
+     * of time", not a real process exit code - lets the model distinguish
+     * this from a normal command failure and react (narrow the command's
+     * scope, run something in the background, split the work up) instead
+     * of the whole task just dying, which is what throwing used to do here.
+     */
+    private static final int TIMEOUT_EXIT_CODE = 124;
 
     private final DockerClient dockerClient;
+    private final SandboxProperties properties;
 
-    public DockerContainerRuntime(DockerClient dockerClient) {
+    public DockerContainerRuntime(DockerClient dockerClient, SandboxProperties properties) {
         this.dockerClient = dockerClient;
+        this.properties = properties;
     }
 
     @Override
@@ -118,12 +127,43 @@ public class DockerContainerRuntime implements ContainerRuntime {
                 }
             };
 
+            int timeoutSeconds = properties.effectiveExecTimeoutSeconds();
             boolean completed = dockerClient.execStartCmd(execCreate.getId())
                     .exec(callback)
-                    .awaitCompletion(DEFAULT_EXEC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                    .awaitCompletion(timeoutSeconds, TimeUnit.SECONDS);
 
             if (!completed) {
-                throw new SandboxException("Command timed out after " + DEFAULT_EXEC_TIMEOUT_SECONDS + "s: " + command);
+                // Deliberately NOT a thrown SandboxException anymore - that
+                // used to propagate out of ToolExecutor.execute() straight
+                // into AgentOrchestrator's catch(SandboxException), which
+                // fails the WHOLE task over one slow command. A build or
+                // test command exceeding the timeout is exactly the kind
+                // of thing large tasks hit and small tasks don't; the model
+                // should get a chance to see "this timed out" and adapt
+                // (narrow scope, background it, skip it) the same way it
+                // already reacts to a non-zero exit code, rather than the
+                // task dying outright. Genuine infra failure (Docker itself
+                // unreachable) still throws, in the catch block below.
+                //
+                // callback.close() detaches our listener from the exec
+                // stream; it does NOT stop the process inside the
+                // container - docker-java's exec API has no direct
+                // "kill this exec" call. The process may keep running
+                // server-side until the container itself is torn down
+                // (task completion or the idle reaper). Documented
+                // trade-off, not an oversight: the alternative (docker top
+                // + kill -9 <pid> by parsing ps output) is a lot of
+                // fragile complexity for what free-tier/dev usage needs.
+                callback.close();
+                String timeoutNote = "\n[Command timed out after " + timeoutSeconds
+                        + "s and was abandoned - it may still be running in the sandbox. "
+                        + "Consider a narrower command, running it in the background with &, "
+                        + "or breaking the task into smaller steps.]";
+                return new ExecResult(
+                        TIMEOUT_EXIT_CODE,
+                        stdout.toString(StandardCharsets.UTF_8),
+                        stderr.toString(StandardCharsets.UTF_8) + timeoutNote
+                );
             }
 
             Long exitCodeLong = dockerClient.inspectExecCmd(execCreate.getId()).exec().getExitCodeLong();

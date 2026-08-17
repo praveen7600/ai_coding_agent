@@ -91,7 +91,8 @@ class AgentOrchestratorTest {
     void modelTextAnswerCompletesTaskOnFirstIteration() {
         FakeLlmClient llmClient = new FakeLlmClient(new ConversationTurn.ModelText("Done, pagination added."));
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher);
+                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher,
+                new OrchestratorProperties(0));
 
         orchestrator.run(taskId);
 
@@ -111,7 +112,8 @@ class AgentOrchestratorTest {
                 .thenReturn(new ExecResult(0, "<project>...</project>", ""));
 
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher);
+                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher,
+                new OrchestratorProperties(0));
 
         orchestrator.run(taskId);
 
@@ -135,9 +137,12 @@ class AgentOrchestratorTest {
 
     @Test
     void exhaustingIterationsWithoutAFinalAnswerFailsTheTask() {
-        // 8 function calls in a row, never a ModelText - the loop should
-        // give up after MAX_ITERATIONS rather than call generate() a 9th time.
-        ModelTurn[] neverEndingCalls = new ModelTurn[8];
+        // Explicit small cap (rather than the real default of 20) so this
+        // test stays fast and its own assertions - "8 function calls",
+        // "fails after 8" - describe a cap this test controls, not a
+        // production default that might change independently of it.
+        int maxIterations = 8;
+        ModelTurn[] neverEndingCalls = new ModelTurn[maxIterations];
         for (int i = 0; i < neverEndingCalls.length; i++) {
             neverEndingCalls[i] = new ConversationTurn.ModelFunctionCall(
                     ToolCatalog.RUN_COMMAND, Map.of("command", "echo still working " + i));
@@ -148,13 +153,14 @@ class AgentOrchestratorTest {
                 .thenReturn(new ExecResult(0, "still working", ""));
 
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher);
+                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher,
+                new OrchestratorProperties(maxIterations));
 
         orchestrator.run(taskId);
 
-        assertThat(llmClient.callCount()).isEqualTo(8);
+        assertThat(llmClient.callCount()).isEqualTo(maxIterations);
         assertThat(task.getStatus()).isEqualTo(TaskStatus.FAILED);
-        assertThat(task.getResultSummary()).contains("8 iterations");
+        assertThat(task.getResultSummary()).contains(maxIterations + " iterations");
     }
 
     @Test
@@ -164,7 +170,8 @@ class AgentOrchestratorTest {
         FakeLlmClient llmClient = new FakeLlmClient(badCall, recovery);
 
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher);
+                llmClient, new ToolCatalog(), toolExecutor, taskService, taskRepository, orchestratorEventPublisher,
+                new OrchestratorProperties(0));
 
         orchestrator.run(taskId);
 
